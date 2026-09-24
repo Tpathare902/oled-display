@@ -1,0 +1,86 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Starfield configuration
+#define NUM_STARS 75 // Adjust based on how dense you want the space to look
+float starX[NUM_STARS];
+float starY[NUM_STARS];
+float starZ[NUM_STARS];
+
+// Warp speed control
+float warpSpeed = 1.5; 
+float acceleration = 0.02; // How fast the ship accelerates
+float maxSpeed = 12.0;
+
+void setup() {
+  Serial.begin(115200);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+
+  // Initialize stars at random 3D coordinates
+  for(int i = 0; i < NUM_STARS; i++) {
+    resetStar(i, true);
+  }
+}
+
+void loop() {
+  display.clearDisplay();
+
+  // Slowly accelerate to max speed for the "warp" effect, then reset
+  warpSpeed += acceleration;
+  if (warpSpeed > maxSpeed) {
+    // Optional: Reset speed to create a pulsing "jump" effect
+    // warpSpeed = 1.5; 
+  }
+
+  // Calculate physics and draw each star
+  for(int i = 0; i < NUM_STARS; i++) {
+    
+    // 1. Calculate where the star USED to be (for drawing the motion trail)
+    int oldScreenX = (SCREEN_WIDTH / 2) + (starX[i] * 64) / starZ[i];
+    int oldScreenY = (SCREEN_HEIGHT / 2) + (starY[i] * 64) / starZ[i];
+    
+    // 2. Move the star closer to the camera along the Z axis
+    starZ[i] -= warpSpeed;
+    
+    // 3. If the star flies past the camera (Z <= 1), reset it into the deep background
+    if(starZ[i] <= 1) {
+      resetStar(i, false);
+      continue; // Skip drawing this frame to prevent weird lines crossing the screen
+    }
+    
+    // 4. Calculate where the star is NOW
+    int newScreenX = (SCREEN_WIDTH / 2) + (starX[i] * 64) / starZ[i];
+    int newScreenY = (SCREEN_HEIGHT / 2) + (starY[i] * 64) / starZ[i];
+    
+    // 5. Draw! 
+    // At low speeds, this draws tiny lines (looks like dots). 
+    // At high speeds, the distance between old and new positions stretches into warp lines.
+    display.drawLine(oldScreenX, oldScreenY, newScreenX, newScreenY, SSD1306_WHITE);
+  }
+
+  display.display();
+}
+
+// Helper function to spawn a new star
+void resetStar(int index, bool randomZ) {
+  starX[index] = random(-64, 64);
+  starY[index] = random(-32, 32);
+  
+  // If randomZ is true (during setup), scatter them everywhere
+  // If false (during loop), spawn them as far back as possible to keep them flowing
+  if (randomZ) {
+    starZ[index] = random(1, 128); 
+  } else {
+  }
+}
