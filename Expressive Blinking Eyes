@@ -1,0 +1,122 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Base Eye Geometry
+const int eyeW = 26;
+const int eyeH = 38;
+const int radius = 8;
+const int cxL = 34;  // Center X of Left Eye
+const int cxR = 94;  // Center X of Right Eye
+const int cy = 32;   // Center Y
+
+void setup() {
+  Serial.begin(115200);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  display.clearDisplay();
+  display.display();
+}
+
+void loop() {
+  // Randomly pick an emotion or action
+  int state = random(0, 100);
+
+  if (state < 40) {
+    playBlink();
+    delay(random(1000, 2000));
+  } 
+  else if (state < 60) {
+    playLookLeft();
+    delay(1000);
+    playCenter();
+  } 
+  else if (state < 80) {
+    playHappy();
+    delay(2000);
+    playCenter();
+  } 
+  else {
+    playBored();
+    delay(2000);
+    playCenter();
+  }
+}
+
+// --- Drawing Helpers ---
+
+// Draws the base white eyes with optional offsets
+void drawBaseEyes(int offsetX, int offsetY) {
+  display.fillRoundRect(cxL - (eyeW/2) + offsetX, cy - (eyeH/2) + offsetY, eyeW, eyeH, radius, SSD1306_WHITE);
+  display.fillRoundRect(cxR - (eyeW/2) + offsetX, cy - (eyeH/2) + offsetY, eyeW, eyeH, radius, SSD1306_WHITE);
+}
+
+// --- Animations & Expressions ---
+
+void playBlink() {
+  // Close
+  for(int h = eyeH; h > 2; h -= 8) {
+    display.clearDisplay();
+    display.fillRoundRect(cxL - (eyeW/2), cy - (h/2), eyeW, h, 2, SSD1306_WHITE);
+    display.fillRoundRect(cxR - (eyeW/2), cy - (h/2), eyeW, h, 2, SSD1306_WHITE);
+    display.display();
+    delay(15);
+  }
+  // Open
+  for(int h = 2; h <= eyeH; h += 8) {
+    display.clearDisplay();
+    display.fillRoundRect(cxL - (eyeW/2), cy - (h/2), eyeW, h, radius, SSD1306_WHITE);
+    display.fillRoundRect(cxR - (eyeW/2), cy - (h/2), eyeW, h, radius, SSD1306_WHITE);
+    display.display();
+    delay(15);
+  }
+}
+
+void playCenter() {
+  display.clearDisplay();
+  drawBaseEyes(0, 0);
+  display.display();
+}
+
+void playLookLeft() {
+  for(int i = 0; i <= 12; i += 3) {
+    display.clearDisplay();
+    drawBaseEyes(-i, 0);
+    display.display();
+    delay(20);
+  }
+}
+
+void playHappy() {
+  playBlink(); // Blink before changing expression makes it feel natural
+  
+  display.clearDisplay();
+  drawBaseEyes(0, 0);
+  
+  // Masking: Draw black circles over the bottom of the eyes to make a ^ ^ shape
+  display.fillCircle(cxL, cy + 12, 16, SSD1306_BLACK);
+  display.fillCircle(cxR, cy + 12, 16, SSD1306_BLACK);
+  
+  display.display();
+}
+
+void playBored() {
+  playBlink();
+  
+  display.clearDisplay();
+  drawBaseEyes(0, 0);
+  
+  // Masking: Drop a black rectangle over the top half for heavy "drooping" eyelids
+  display.fillRect(0, 0, 128, cy - 4, SSD1306_BLACK);
+  
+  display.display();
+}
