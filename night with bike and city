@@ -1,0 +1,193 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// --- City Generation Configuration ---
+#define NUM_BUILDINGS 8
+struct Building {
+  float x;
+  int w;
+  int h;
+  int style; 
+};
+Building city[NUM_BUILDINGS];
+
+// Scrolling speeds
+float cityScrollSpeed = 1.5;
+float roadScrollSpeed = 8.0; 
+float starScrollSpeed = 0.2;
+
+float roadOffset = 0;
+float starOffset = 0;
+
+// Exhaust Particle System
+int sparkX = -10;
+int sparkY = -10;
+
+void setup() {
+  Serial.begin(115200);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+
+  // Generate the initial sequence of buildings
+  float currentX = 0;
+  for(int i = 0; i < NUM_BUILDINGS; i++) {
+    city[i].w = random(16, 36);
+    city[i].h = random(12, 30); // Kept lower to leave room for the sky
+    city[i].style = random(0, 4);
+    city[i].x = currentX;
+    currentX += city[i].w;
+  }
+}
+
+void loop() {
+  display.clearDisplay();
+  unsigned long timeNow = millis();
+
+  // --- 1. BACKGROUND: Stars, Wind, & Small Moon ---
+  starOffset -= starScrollSpeed;
+  if (starOffset < -40) starOffset = 0; 
+
+  // Distant stars
+  display.drawPixel(20 + starOffset, 10, SSD1306_WHITE);
+  display.drawPixel(60 + starOffset, 5,  SSD1306_WHITE);
+  display.drawPixel(100 + starOffset, 15, SSD1306_WHITE);
+  display.drawPixel(130 + starOffset, 8,  SSD1306_WHITE);
+
+  // High-Speed Wind/Speed Lines (Whips past randomly)
+  if (random(0, 10) > 7) {
+    int windY = random(10, 40);
+    display.drawFastHLine(random(30, 100), windY, random(8, 24), SSD1306_WHITE);
+  }
+
+  // The Small, Sharp Crescent Moon
+  float moonX = 105 + (starOffset / 4);
+  // Draw solid white circle (radius 6), then cut it with a smaller offset black circle
+  display.fillCircle(moonX, 12, 6, SSD1306_WHITE); 
+  display.fillCircle(moonX - 2, 10, 5, SSD1306_BLACK); 
+
+  // --- 2. MIDGROUND: The Procedural City ---
+  for(int i = 0; i < NUM_BUILDINGS; i++) {
+    city[i].x -= cityScrollSpeed;
+
+    // Recycle buildings that go off-screen
+    if(city[i].x + city[i].w < 0) {
+      float maxX = 0;
+      for(int j = 0; j < NUM_BUILDINGS; j++) {
+        if (city[j].x + city[j].w > maxX) {
+          maxX = city[j].x + city[j].w;
+        }
+      }
+      city[i].x = maxX;
+      city[i].w = random(16, 36);
+      city[i].h = random(12, 30);
+      city[i].style = random(0, 4);
+    }
+
+    int bx = (int)city[i].x;
+    int bw = city[i].w;
+    int bh = city[i].h;
+    int horizonY = 48; // The horizon line where buildings meet the ground
+    int by = horizonY - bh; 
+
+    // Building outline
+    display.drawRect(bx, by, bw, bh, SSD1306_WHITE);
+
+    // Windows
+    if (city[i].style == 1) { 
+      for (int wx = bx + 3; wx < bx + bw - 4; wx += 6) {
+        for (int wy = by + 4; wy < horizonY - 4; wy += 6) {
+          display.fillRect(wx, wy, 2, 3, SSD1306_WHITE);
+        }
+      }
+    } 
+    else if (city[i].style == 2) { 
+      for (int wx = bx + 4; wx < bx + bw - 2; wx += 4) {
+        display.drawLine(wx, by + 4, wx, horizonY - 4, SSD1306_WHITE);
+      }
+    }
+    else if (city[i].style == 3) {
+      for (int wx = bx + 3; wx < bx + bw - 3; wx += 5) {
+        for (int wy = by + 4; wy < horizonY - 4; wy += 5) {
+          int localX = wx - bx;
+          if ((localX / 5 + wy / 5) % 2 == 0) {
+            display.drawPixel(wx, wy, SSD1306_WHITE);
+            display.drawPixel(wx+1, wy, SSD1306_WHITE);
+          }
+        }
+      }
+    }
+  }
+
+  // --- 3. FOREGROUND ROAD ---
+  // Solid horizon line
+  display.drawFastHLine(0, 48, 128, SSD1306_WHITE);
+
+  // Fast scrolling dashes
+  roadOffset += roadScrollSpeed;
+  if (roadOffset >= 24) roadOffset -= 24; 
+  for (int x = -roadOffset; x < 128; x += 24) {
+    display.drawFastHLine(x, 60, 12, SSD1306_WHITE);
+  }
+
+  // --- 4. THE GIRL ON THE MOTORCYCLE ---
+  int bikeX = 30; 
+  
+  // Suspension Vibration Math (1 pixel up or down randomly to simulate engine rumble/bumpy road)
+  int vibration = (random(0, 10) > 6) ? 1 : 0;
+  int bikeY = 54 + vibration; // Center of the wheels
+  
+  // Wheels
+  display.drawCircle(bikeX, bikeY, 4, SSD1306_WHITE);      // Rear wheel
+  display.drawCircle(bikeX + 20, bikeY, 4, SSD1306_WHITE); // Front wheel
+  display.fillCircle(bikeX, bikeY, 1, SSD1306_WHITE);      // Rear axle
+  display.fillCircle(bikeX + 20, bikeY, 1, SSD1306_WHITE); // Front axle
+  
+  // Bike Frame & Tank
+  display.drawLine(bikeX, bikeY, bikeX + 10, bikeY - 5, SSD1306_WHITE); // Rear frame
+  display.drawLine(bikeX + 10, bikeY - 5, bikeX + 20, bikeY, SSD1306_WHITE); // Front forks
+  display.fillRoundRect(bikeX + 6, bikeY - 7, 8, 4, 1, SSD1306_WHITE); // Gas tank
+  display.drawLine(bikeX + 10, bikeY - 5, bikeX + 16, bikeY, SSD1306_WHITE); // Engine angle
+
+  // Headlight Beam (A subtle conical projection)
+  display.drawLine(bikeX + 22, bikeY - 2, bikeX + 35, bikeY + 2, SSD1306_WHITE);
+  display.drawPixel(bikeX + 24, bikeY - 1, SSD1306_WHITE);
+
+  // Exhaust Spark Particles
+  sparkX -= 6; // Moves back extremely fast
+  sparkY += random(-1, 2); // Drifts randomly
+  if (sparkX < 0) { // Reset particle to exhaust pipe
+    sparkX = bikeX - 2;
+    sparkY = bikeY;
+  }
+  display.drawPixel(sparkX, sparkY, SSD1306_WHITE);
+  display.drawPixel(sparkX + 1, sparkY, SSD1306_WHITE); // Trail
+
+  // Girl Rider Silhouette (Intense forward-leaning posture)
+  display.drawLine(bikeX + 4, bikeY - 5, bikeX + 12, bikeY - 11, SSD1306_WHITE); // Back
+  display.drawLine(bikeX + 5, bikeY - 5, bikeX + 13, bikeY - 11, SSD1306_WHITE); // Chest/Jacket
+  
+  // Arms reaching to handlebars
+  display.drawLine(bikeX + 12, bikeY - 11, bikeX + 18, bikeY - 8, SSD1306_WHITE);
+  
+  // Head/Helmet
+  display.fillCircle(bikeX + 14, bikeY - 13, 3, SSD1306_WHITE); 
+  
+  // Flowing Hair (Procedurally whipped in the wind using sine waves)
+  int hairWave1 = sin(timeNow / 120.0) * 3;
+  int hairWave2 = cos(timeNow / 90.0) * 4;
+  display.drawLine(bikeX + 12, bikeY - 13, bikeX + 2, bikeY - 11 + hairWave1, SSD1306_WHITE);
+  display.drawLine(bikeX + 13, bikeY - 12, bikeX + 1, bikeY - 9 + hairWave2, SSD1306_WHITE);
+
+  display.display();
+  delay(15); 
+}
