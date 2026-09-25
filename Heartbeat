@@ -1,0 +1,166 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// ECG Data Array (Stores the height of the line at every X pixel)
+int yData[128];
+int currentX = 0;
+
+// The mathematical shape of a perfect heartbeat (P, Q, R, S, T waves)
+// Negative numbers draw UP on the OLED screen.
+const int beatPattern[18] = {
+  0, -1, -2, -1, 0,   // P Wave (Small bump)
+  3, -28, 12,         // QRS Complex (The massive spike!)
+  0, 0,               // ST Segment
+  -2, -3, -4, -3, -2, // T Wave (Medium bump)
+  0, 0, 0
+};
+const int NUM_BEAT_STEPS = 18;
+int beatIndex = -1; // -1 means it's currently flatlining between beats
+
+// Timing and State Machine
+unsigned long lastBeatTime = 0;
+unsigned long beatInterval = 850; 
+unsigned long lastModeChange = 0;
+
+bool isPanic = false;
+float amplitude = 1.0;
+int stepSpeed = 1;
+int currentBPM = 72;
+int flashFrames = 0; // Controls the hardware screen flash
+
+void setup() {
+  Serial.begin(115200);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  
+  // Initialize the screen with a flatline perfectly in the center
+  for(int i = 0; i < 128; i++) {
+    yData[i] = 32; 
+  }
+}
+
+void loop() {
+  unsigned long now = millis();
+  
+  // --- 1. The Autonomous "Adrenaline" State Machine ---
+  // Change states randomly every 8 to 15 seconds
+  if (now - lastModeChange > random(8000, 15000)) {
+    isPanic = !isPanic;
+    lastModeChange = now;
+    
+    if (isPanic) {
+      beatInterval = 300;     // Frantic heart rate
+      amplitude = 1.8;        // Spike hits the ceiling and floor
+      stepSpeed = 2;          // The pen sweeps across the screen twice as fast
+      currentBPM = random(165, 185); 
+    } else {
+      beatInterval = 850;     // Calm, resting heart rate
+      amplitude = 1.0;        // Normal spike height
+      stepSpeed = 1;          // Normal sweep speed
+      currentBPM = random(70, 76);
+    }
+  }
+
+  // --- 2. Trigger the Heartbeat ---
+  if (now - lastBeatTime > beatInterval) {
+    beatIndex = 0; // Start drawing the beat array
+    lastBeatTime = now;
+    
+    // If in panic mode, trigger a 2-frame blinding flash on the beat!
+    if (isPanic) flashFrames = 2; 
+  }
+
+  // --- 3. Generate the Next Pixels ---
+  // stepSpeed allows the pen to jump forward faster during Adrenaline mode
+  for(int s = 0; s < stepSpeed; s++) {
+    int y = 32; // Center base line
+    
+    // Add 1 pixel of raw analog noise to the flatline for gritty realism
+    y += random(-1, 2); 
+    
+    // Inject the heartbeat spike math if a beat is currently happening
+    if (beatIndex >= 0 && beatIndex < NUM_BEAT_STEPS) {
+      y += (int)(beatPattern[beatIndex] * amplitude);
+      beatIndex++;
+    } else {
+      beatIndex = -1; // Finished the beat, go back to flatline
+    }
+    
+    // Store the data and advance the sweeping pen
+    yData[currentX] = y;
+    currentX++;
+    if (currentX >= 128) currentX = 0; // Wrap around to the left edge
+  }
+  
+  // --- 4. Render to OLED ---
+  display.clearDisplay();
+  
+  // A. Draw the faint Medical Grid Background (Crosshairs every 16 pixels)
+  for (int x = 0; x < 128; x += 16) {
+    for (int y = 0; y < 64; y += 16) {
+      display.drawPixel(x, y, SSD1306_WHITE);
+    }
+  }
+  
+  // B. Draw the sweeping line with a "Gap"
+  int gapSize = 12; // How many pixels to erase in front of the pen
+  for (int i = 0; i < 127; i++) {
+    
+    // Math to figure out if 'i' is inside the invisible gap, accounting for screen wrap
+    bool inGap = false;
+    if (currentX + gapSize < 128) {
+      if (i >= currentX && i <= currentX + gapSize) inGap = true;
+    } else {
+      int wrapEnd = (currentX + gapSize) % 128;
+      if (i >= currentX || i <= wrapEnd) inGap = true;
+    }
+    
+    // If we aren't in the gap, draw the line segment
+    if (!inGap) {
+      display.drawLine(i, yData[i], i+1, yData[i+1], SSD1306_WHITE);
+    }
+  }
+  
+  // C. Draw the Glowing Phosphor Pen (A solid circle at the very front of the line)
+  display.fillCircle(currentX, yData[currentX], 2, SSD1306_WHITE);
+  
+  // D. Draw the Cybernetic HUD Text
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  if (!isPanic) {
+    display.setCursor(2, 2);
+    display.print("BPM:");
+    display.print(currentBPM);
+  } else {
+    // Blinking warning effect
+    if ((millis() / 150) % 2 == 0) {
+      display.setCursor(2, 2);
+      display.print("BPM:");
+      display.print(currentBPM);
+      
+      display.setCursor(95, 2);
+      display.print("WARN");
+    }
+  }
+  
+  // E. Execute the Hardware Lightning Flash
+  if (flashFrames > 0) {
+    display.invertDisplay(true); // Flips black to white and white to black
+    flashFrames--;
+  } else {
+    display.invertDisplay(false);
+  }
+  
+  display.display();
+  delay(10); // Ultra-fast loop for fluid sweep motion
+}
