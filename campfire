@@ -1,0 +1,160 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <math.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// --- Subtractive Fire Physics Variables ---
+#define NUM_CARVERS 18
+struct Carver {
+  float x, y;
+  float speedY;
+  float phase;
+  float maxRadius;
+};
+Carver carvers[NUM_CARVERS];
+
+// --- Spark System Variables ---
+#define NUM_SPARKS 25
+struct Spark {
+  float x, y;
+  float vx, vy;
+};
+Spark sparks[NUM_SPARKS];
+
+// Background Drift
+float starOffset = 0;
+
+void setup() {
+  Serial.begin(115200);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  
+  // Initialize the invisible "Carver" circles that cut the flames
+  for(int i = 0; i < NUM_CARVERS; i++) {
+    carvers[i].x = random(45, 83);
+    carvers[i].y = random(10, 60); 
+    carvers[i].speedY = random(15, 45) / 10.0;
+    carvers[i].phase = random(0, 100) / 10.0;
+    carvers[i].maxRadius = random(5, 12);
+  }
+
+  // Initialize sparks
+  for(int i = 0; i < NUM_SPARKS; i++) {
+    sparks[i].y = -10; // Start off screen so they stagger in naturally
+  }
+}
+
+void loop() {
+  display.clearDisplay();
+  float t = millis() / 1000.0; // Time variable to drive the fluid math
+  
+  // --- 1. BACKGROUND: Starry Night & Crescent Moon ---
+  starOffset -= 0.15; // Slow, dreamy drift
+  if (starOffset < -40) starOffset = 0; 
+
+  // Distant drifting stars
+  display.drawPixel(10 + starOffset, 10, SSD1306_WHITE);
+  display.drawPixel(50 + starOffset, 5,  SSD1306_WHITE);
+  display.drawPixel(90 + starOffset, 15, SSD1306_WHITE);
+  display.drawPixel(120 + starOffset, 8, SSD1306_WHITE);
+  display.drawPixel(70 + starOffset, 25, SSD1306_WHITE);
+  display.drawPixel(135 + starOffset, 20, SSD1306_WHITE);
+
+  // The Crescent Moon (Top Left)
+  // Drawn using subtractive masking to make a perfect sharp crescent
+  display.fillCircle(25, 16, 12, SSD1306_WHITE); 
+  display.fillCircle(21, 13, 11, SSD1306_BLACK); 
+
+
+  // --- 2. THE CORE FIRE VOLUME (Solid White Triangles) ---
+  // Tall Center-Left Flame
+  float t1x = 60 + sin(t * 8.0) * 4;
+  float t1y = 8 + cos(t * 5.0) * 6;
+  display.fillTriangle(48, 57, 72, 57, t1x, t1y, SSD1306_WHITE);
+
+  // Medium Right Flame
+  float t2x = 72 + sin(t * 6.5 + 2.0) * 6;
+  float t2y = 15 + cos(t * 7.0 + 1.0) * 7;
+  display.fillTriangle(55, 57, 84, 57, t2x, t2y, SSD1306_WHITE);
+
+  // Wide Base Flame (Anchors the fire)
+  float t3x = 55 + sin(t * 9.0 + 4.0) * 5;
+  float t3y = 20 + cos(t * 6.0 + 3.0) * 4;
+  display.fillTriangle(40, 57, 80, 57, t3x, t3y, SSD1306_WHITE);
+
+
+  // --- 3. SUBTRACTIVE METABALL MASKING (The Black Holes) ---
+  for(int i = 0; i < NUM_CARVERS; i++) {
+    carvers[i].y -= carvers[i].speedY;
+    
+    // The carvers drift left and right as they rise
+    float cx = carvers[i].x + sin(t * 4.0 + carvers[i].phase) * 6.0;
+    
+    float progress = (58.0 - carvers[i].y) / 45.0; 
+    if (progress < 0) progress = 0;
+    
+    float currentRadius = carvers[i].maxRadius * progress;
+    
+    // Carve a hole in the fire (and act as invisible smoke against the stars)
+    if (currentRadius > 0) {
+      display.fillCircle(cx, carvers[i].y, currentRadius, SSD1306_BLACK);
+    }
+    
+    // Reset the carver to the bottom of the logs when it hits the sky
+    if (carvers[i].y < -10) {
+      carvers[i].y = 57 + random(0, 8);
+      carvers[i].x = random(44, 84);
+      carvers[i].speedY = random(20, 50) / 10.0;
+    }
+  }
+
+
+  // --- 4. HIGH-SPEED EMBERS (Sparks) ---
+  for(int i = 0; i < NUM_SPARKS; i++) {
+    sparks[i].x += sparks[i].vx + sin(t * 5.0 + i) * 0.8; // Sine wave drift
+    sparks[i].y += sparks[i].vy;
+
+    // Twinkle effect (Randomly skip drawing the pixel)
+    if(random(0, 10) > 1) {
+      display.drawPixel(sparks[i].x, sparks[i].y, SSD1306_WHITE);
+    }
+
+    // Respawn spark from the fire core
+    if(sparks[i].y < -5) {
+      sparks[i].y = random(35, 55);
+      sparks[i].x = random(48, 80);
+      sparks[i].vx = random(-15, 15) / 10.0;
+      sparks[i].vy = random(-40, -20) / 10.0; // Shoot up fast
+    }
+  }
+
+
+  // --- 5. REALISTIC TEXTURED WOOD LOGS ---
+  // Floor ambient glow under the logs
+  display.drawFastHLine(40, 59, 48, SSD1306_WHITE);
+  display.drawFastHLine(45, 61, 38, SSD1306_WHITE);
+  for(int i = 48; i < 80; i += 2) display.drawPixel(i, 63, SSD1306_WHITE); // Dithered fade
+
+  // Log 1: Back log (Angled slightly right)
+  for(int i = -3; i <= 3; i++) display.drawLine(44, 52 + i, 78, 58 + i, SSD1306_BLACK); 
+  for(int i = -1; i <= 1; i++) display.drawLine(44, 52 + i, 78, 58 + i, SSD1306_WHITE); 
+  display.drawLine(46, 53, 74, 58, SSD1306_BLACK); 
+
+  // Log 2: Front log (Angled sharply left, overlapping the first log)
+  for(int i = -4; i <= 4; i++) display.drawLine(82, 51 + i, 48, 60 + i, SSD1306_BLACK); 
+  for(int i = -2; i <= 2; i++) display.drawLine(82, 51 + i, 48, 60 + i, SSD1306_WHITE); 
+  display.drawLine(78, 52, 52, 59, SSD1306_BLACK); 
+  display.drawLine(80, 54, 60, 60, SSD1306_BLACK); 
+
+  display.display();
+  delay(15); 
+}
