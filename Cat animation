@@ -1,0 +1,158 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <math.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Emotion States
+enum Emotion { SLEEPY, HAPPY, SHOCKED, ANGRY };
+Emotion currentEmotion = SLEEPY;
+unsigned long lastEmotionChange = 0;
+
+// Floating 'Z' coordinates (only used in SLEEPY state)
+float zX = 90;
+float zY = 20;
+
+void setup() {
+  Serial.begin(115200);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+}
+
+void loop() {
+  display.clearDisplay();
+
+  // Change emotion every 3 to 6 seconds
+  if (millis() - lastEmotionChange > random(3000, 6000)) {
+    currentEmotion = (Emotion)random(0, 4); // Pick a random emotion (0 to 3)
+    lastEmotionChange = millis();
+    // Reset the floating Z just in case we go back to sleep
+    zY = 25; 
+    zX = 85;
+  }
+
+  // Calculate breathing speed based on emotion
+  float breathRate;
+  if (currentEmotion == SLEEPY) breathRate = 400.0;       // Deep, slow breaths
+  else if (currentEmotion == ANGRY) breathRate = 100.0;   // Fast, huffing breaths
+  else breathRate = 250.0;                                // Normal breathing
+
+  float breath = sin(millis() / breathRate) * 2.5; 
+  int headY = 25 + breath; 
+
+  // Draw the base head (Ears, Face shape, Cheeks)
+  drawCatBase(headY);
+
+  // Draw the specific facial features based on current mood
+  switch (currentEmotion) {
+    case SLEEPY:
+      drawSleepyFace(headY);
+      break;
+    case HAPPY:
+      drawHappyFace(headY);
+      break;
+    case SHOCKED:
+      drawShockedFace(headY);
+      break;
+    case ANGRY:
+      drawAngryFace(headY);
+      break;
+  }
+
+  display.display();
+  delay(20);
+}
+
+// --- The Base Cat (Drawn every frame) ---
+void drawCatBase(int headY) {
+  // Ears
+  display.fillTriangle(30, headY + 15, 40, headY - 12, 52, headY, SSD1306_WHITE);
+  display.fillTriangle(76, headY, 88, headY - 12, 98, headY + 15, SSD1306_WHITE);
+  
+  // Round squishy head
+  display.fillRoundRect(24, headY, 80, 42, 20, SSD1306_WHITE);
+  
+  // Blushing cheeks
+  display.drawLine(35, headY + 22, 39, headY + 22, SSD1306_BLACK);
+  display.drawLine(89, headY + 22, 93, headY + 22, SSD1306_BLACK);
+}
+
+// --- Emotion 1: Sleepy ---
+void drawSleepyFace(int headY) {
+  // -u- Eyes
+  display.fillCircle(45, headY + 18, 5, SSD1306_BLACK);
+  display.fillCircle(45, headY + 18, 3, SSD1306_WHITE);
+  display.fillRect(39, headY + 12, 13, 7, SSD1306_WHITE); 
+  
+  display.fillCircle(83, headY + 18, 5, SSD1306_BLACK);
+  display.fillCircle(83, headY + 18, 3, SSD1306_WHITE);
+  display.fillRect(77, headY + 12, 13, 7, SSD1306_WHITE); 
+
+  // Tiny 'w' Mouth
+  display.drawCircle(61, headY + 23, 3, SSD1306_BLACK);
+  display.drawCircle(67, headY + 23, 3, SSD1306_BLACK);
+  display.drawCircle(61, headY + 22, 3, SSD1306_WHITE);
+  display.drawCircle(67, headY + 22, 3, SSD1306_WHITE);
+  display.fillRect(57, headY + 18, 15, 5, SSD1306_WHITE);
+
+  // Floating 'Z' Logic
+  zY -= 0.6; 
+  zX += 0.2; 
+  if (zY < -15) { zY = headY; zX = 85; }
+  
+  int textSize = (zY < headY - 30) ? 3 : (zY < headY - 15) ? 2 : 1;
+  display.setTextSize(textSize);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(zX, zY);
+  display.print("Z");
+}
+
+// --- Emotion 2: Happy / Awake ---
+void drawHappyFace(int headY) {
+  // Big shiny anime eyes (Black circle with small white catchlight)
+  display.fillCircle(45, headY + 17, 5, SSD1306_BLACK);
+  display.fillCircle(46, headY + 15, 2, SSD1306_WHITE); 
+  
+  display.fillCircle(83, headY + 17, 5, SSD1306_BLACK);
+  display.fillCircle(84, headY + 15, 2, SSD1306_WHITE); 
+
+  // Open 'D' shaped happy mouth
+  display.fillCircle(64, headY + 23, 4, SSD1306_BLACK);
+  display.fillRect(60, headY + 18, 9, 5, SSD1306_WHITE); // Mask the top half flat
+}
+
+// --- Emotion 3: Shocked ---
+void drawShockedFace(int headY) {
+  // Wide empty eyes
+  display.drawCircle(45, headY + 16, 6, SSD1306_BLACK);
+  display.fillCircle(45, headY + 16, 2, SSD1306_BLACK); // Tiny pupils
+  
+  display.drawCircle(83, headY + 16, 6, SSD1306_BLACK);
+  display.fillCircle(83, headY + 16, 2, SSD1306_BLACK);
+
+  // Big 'O' mouth
+  display.fillCircle(64, headY + 26, 3, SSD1306_BLACK);
+}
+
+// --- Emotion 4: Angry ---
+void drawAngryFace(int headY) {
+  // Base eyes
+  display.fillCircle(45, headY + 18, 5, SSD1306_BLACK);
+  display.fillCircle(83, headY + 18, 5, SSD1306_BLACK);
+  
+  // Angry Eyebrow Masks (Uses white triangles to cut sharp diagonal angles into the eyes)
+  display.fillTriangle(38, headY + 11, 52, headY + 19, 52, headY + 11, SSD1306_WHITE); // Left brow
+  display.fillTriangle(90, headY + 11, 76, headY + 19, 76, headY + 11, SSD1306_WHITE); // Right brow
+
+  // Inverted 'v' angry mouth
+  display.drawLine(62, headY + 26, 64, headY + 23, SSD1306_BLACK);
+  display.drawLine(64, headY + 23, 66, headY + 26, SSD1306_BLACK);
+}
