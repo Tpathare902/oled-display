@@ -1,0 +1,202 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <math.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Physics Engine
+float ballX = 64;
+float ballY = 20;
+float vx = 3.5;
+float vy = 0;
+const float gravity = 0.45;
+const float floorY = 58;
+const float baseRadius = 7.0;
+
+// Animation States
+int squashFrames = 0;
+int idleFrames = 0;
+
+// Fluid Tail History Array (Stores the last 8 positions for the motion trail)
+#define TRAIL_LENGTH 8
+float trailX[TRAIL_LENGTH];
+float trailY[TRAIL_LENGTH];
+
+// Background Star Drift
+float starOffset = 0;
+
+void setup() {
+  Serial.begin(115200);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  
+  // Initialize the trail array to the start position
+  for (int i = 0; i < TRAIL_LENGTH; i++) {
+    trailX[i] = ballX;
+    trailY[i] = ballY;
+  }
+}
+
+void loop() {
+  display.clearDisplay();
+
+  // --- 1. BACKGROUND: Stars & Crescent Moon ---
+  starOffset -= 0.15; // Slow, dreamy drift
+  if (starOffset < -40) starOffset = 0; 
+
+  // Distant drifting stars
+  display.drawPixel(20 + starOffset, 10, SSD1306_WHITE);
+  display.drawPixel(60 + starOffset, 5,  SSD1306_WHITE);
+  display.drawPixel(100 + starOffset, 25, SSD1306_WHITE);
+  display.drawPixel(10 + starOffset, 30,  SSD1306_WHITE);
+  display.drawPixel(125 + starOffset, 8,  SSD1306_WHITE);
+  display.drawPixel(75 + starOffset, 35,  SSD1306_WHITE);
+
+  // The Aesthetic Crescent Moon (Top Right)
+  // Draw a solid white circle, then cut it with a smaller offset black circle
+  display.fillCircle(105, 16, 12, SSD1306_WHITE); 
+  display.fillCircle(101, 13, 11, SSD1306_BLACK); 
+
+  // --- 2. UPDATE TRAIL HISTORY ---
+  // Shift all old positions down the array
+  for (int i = TRAIL_LENGTH - 1; i > 0; i--) {
+    trailX[i] = trailX[i - 1];
+    trailY[i] = trailY[i - 1];
+  }
+  // Save current position at the head of the trail
+  trailX[0] = ballX;
+  trailY[0] = ballY;
+
+  // --- 3. KINEMATIC PHYSICS ---
+  vy += gravity; 
+  ballX += vx;
+  ballY += vy;
+
+  // Floor Collision
+  if (ballY + baseRadius >= floorY) {
+    ballY = floorY - baseRadius;
+    
+    if (vy > 2.0) {
+      squashFrames = 3; // Trigger the hard impact squash
+    }
+    
+    vy = -vy * 0.75; 
+    vx = vx * 0.92;  
+  }
+
+  // Wall Collisions
+  if (ballX - baseRadius < 0) {
+    ballX = baseRadius;
+    vx = -vx * 0.8;
+  } else if (ballX + baseRadius > 128) {
+    ballX = 128 - baseRadius;
+    vx = -vx * 0.8;
+  }
+
+  // --- 4. THE "MELT" AND JUMP LOGIC ---
+  float currentRx, currentRy;
+  bool isMelting = false;
+
+  if (abs(vx) < 0.2 && abs(vy) < 0.5 && (ballY + baseRadius) >= floorY - 1) {
+    idleFrames++;
+    isMelting = true;
+    
+    // Calculate the melt factor (0.0 to 1.0)
+    float meltFactor = (idleFrames > 15) ? (idleFrames - 15) / 30.0 : 0.0;
+    if (meltFactor > 1.0) meltFactor = 1.0; 
+
+    // The slime flattens and widens into a puddle
+    currentRx = baseRadius + (meltFactor * 12.0); 
+    currentRy = baseRadius - (meltFactor * 4.5);  
+    
+    // Adjust Y so the bottom stays perfectly flat on the floor while it melts
+    ballY = floorY - currentRy;
+
+    // Jump out of the puddle state!
+    if (idleFrames > 80) {
+      vy = -random(55, 95) / 10.0; 
+      vx = random(-45, 45) / 10.0; 
+      idleFrames = 0;
+      isMelting = false;
+      
+      // Instantly snap the trail to the jump point so it doesn't drag on the floor
+      for (int i = 0; i < TRAIL_LENGTH; i++) {
+        trailX[i] = ballX;
+        trailY[i] = ballY;
+      }
+    }
+  } else {
+    idleFrames = 0;
+    
+    // Squash & Stretch Math (In the air)
+    if (squashFrames > 0) {
+      currentRx = baseRadius * 1.6;
+      currentRy = baseRadius * 0.5;
+      squashFrames--;
+    } else {
+      float stretch = abs(vy) * 0.35;
+      currentRy = baseRadius + stretch;
+      currentRx = baseRadius - (stretch * 0.3);
+      if (currentRx < 3) currentRx = 3; 
+    }
+  }
+
+  // --- 5. RENDERING SLIME ---
+  
+  // A. Draw the Fluid Trail (Only if moving fast and not melted)
+  if (!isMelting && (abs(vx) > 1.0 || abs(vy) > 1.0)) {
+    for (int i = 0; i < TRAIL_LENGTH; i++) {
+      float trailRadius = baseRadius - (i * (baseRadius / TRAIL_LENGTH)); 
+      if (trailRadius > 0) {
+        display.fillCircle(trailX[i], trailY[i], trailRadius, SSD1306_WHITE);
+      }
+    }
+  }
+
+  // B. Draw the Main Slime Body
+  fillEllipse(ballX, ballY, currentRx, currentRy);
+
+  // C. Draw the Eyes based on state
+  if (isMelting && idleFrames > 30) {
+    // Sleepy Puddle Eyes (- -)
+    display.drawFastHLine(ballX - 6, ballY, 4, SSD1306_BLACK);
+    display.drawFastHLine(ballX + 2, ballY, 4, SSD1306_BLACK);
+  } else {
+    // Velocity-Mapped Open Eyes
+    int eyeOffsetX = (vx * 0.7);
+    int eyeOffsetY = (vy * 0.5);
+    
+    if (eyeOffsetX > currentRx - 3) eyeOffsetX = currentRx - 3;
+    if (eyeOffsetX < -currentRx + 3) eyeOffsetX = -currentRx + 3;
+    
+    int eyeSpacing = (currentRx * 0.5); 
+    display.fillCircle(ballX - eyeSpacing + eyeOffsetX, ballY + eyeOffsetY, 2, SSD1306_BLACK);
+    display.fillCircle(ballX + eyeSpacing + eyeOffsetX, ballY + eyeOffsetY, 2, SSD1306_BLACK);
+    
+    // Tiny white catchlights to make the eyes look glassy and alive
+    display.drawPixel(ballX - eyeSpacing + eyeOffsetX, ballY + eyeOffsetY - 1, SSD1306_WHITE);
+    display.drawPixel(ballX + eyeSpacing + eyeOffsetX, ballY + eyeOffsetY - 1, SSD1306_WHITE);
+  }
+
+  // --- 6. RENDER FLOOR ---
+  display.drawFastHLine(0, floorY, 128, SSD1306_WHITE);
+
+  display.display();
+  delay(15); 
+}
+
+// --- CUSTOM GRAPHICS FUNCTIONS ---
+void fillEllipse(int x0, int y0, int rx, int ry) {
+  for (int y = -ry; y <= ry; y++) {
+    int dx = rx * sqrt(1.0 - (float)(y * y) / (ry * ry));
+    display.drawFastHLine(x0 - dx, y0 + y, dx * 2, SSD1306_WHITE);
+  }
+}
