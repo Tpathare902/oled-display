@@ -1,0 +1,169 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <math.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Z Bubble Structure
+struct ZBubble {
+  float baseX, y;
+  float speed;
+  int size;
+  float swayPhase; 
+  bool active;
+};
+
+#define MAX_ZS 3
+ZBubble zs[MAX_ZS];
+
+// State Machine Variables
+enum SleepState { ASLEEP, POPPING, AWAKE_SHOCK };
+SleepState currentState = ASLEEP;
+unsigned long stateTimer = 0;
+
+void setup() {
+  Serial.begin(115200);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+
+  // Initialize swaying Zs
+  for(int i = 0; i < MAX_ZS; i++) {
+    zs[i].baseX = 85 + (i * 6);
+    zs[i].y = 40 - (i * 15);
+    zs[i].speed = 0.4 + (i * 0.15);
+    zs[i].size = i + 1;
+    zs[i].swayPhase = i * 2.0; // Stagger the swaying motion
+    zs[i].active = true;
+  }
+}
+
+void loop() {
+  display.clearDisplay();
+  unsigned long timeNow = millis();
+
+  // --- 1. STATE MACHINE LOGIC ---
+  if (currentState == ASLEEP) {
+    // Random 1-in-250 chance per frame to pop the bubble
+    if (random(0, 250) == 1) {
+      currentState = POPPING;
+      stateTimer = timeNow;
+    }
+  } 
+  else if (currentState == POPPING) {
+    // Show the pop particles for 150ms
+    if (timeNow - stateTimer > 150) {
+      currentState = AWAKE_SHOCK;
+      stateTimer = timeNow;
+    }
+  } 
+  else if (currentState == AWAKE_SHOCK) {
+    // Keep eyes wide open for 800ms, then go back to sleep
+    if (timeNow - stateTimer > 800) {
+      currentState = ASLEEP;
+    }
+  }
+
+  // --- 2. BREATHING MATH ---
+  // If awake, stop breathing (freeze). If asleep, breathe smoothly.
+  float breathAngle = (currentState == ASLEEP) ? (timeNow / 400.0) : 0;
+  float breath = sin(breathAngle); 
+  int headY = 28 + (breath * 2);
+
+  // --- 3. DRAW THE BOT (Retro CRT TV Style) ---
+  // Outer casing
+  display.fillRoundRect(24, headY, 44, 32, 6, SSD1306_WHITE);
+  // Inner screen bezel
+  display.fillRoundRect(28, headY + 4, 36, 24, 3, SSD1306_BLACK);
+  
+  // Cute Antenna
+  display.drawLine(46, headY, 46, headY - 8, SSD1306_WHITE);
+  display.fillCircle(46, headY - 9, 2, SSD1306_WHITE);
+
+  // Facial Expressions based on State
+  if (currentState == ASLEEP || currentState == POPPING) {
+    // Sleeping Eyes (- -)
+    display.drawFastHLine(34, headY + 14, 8, SSD1306_WHITE);
+    display.drawFastHLine(50, headY + 14, 8, SSD1306_WHITE);
+  } 
+  else if (currentState == AWAKE_SHOCK) {
+    // Wide Shocked Eyes (O O)
+    display.drawCircle(38, headY + 14, 4, SSD1306_WHITE);
+    display.drawCircle(54, headY + 14, 4, SSD1306_WHITE);
+    // Tiny terrified pupils
+    display.drawPixel(38, headY + 14, SSD1306_WHITE);
+    display.drawPixel(54, headY + 14, SSD1306_WHITE);
+  }
+
+  // --- 4. THE ANIME SNORE BUBBLE ---
+  int bubbleX = 54;
+  int bubbleY = headY + 22;
+
+  if (currentState == ASLEEP) {
+    // The bubble physically expands and contracts with the sine wave breath
+    int bubbleRadius = 5 + (breath * 4); // Swells from 1px to 9px
+    if (bubbleRadius > 0) {
+      // Draw hollow glassy bubble
+      display.fillCircle(bubbleX, bubbleY, bubbleRadius, SSD1306_WHITE);
+      display.fillCircle(bubbleX, bubbleY, bubbleRadius - 1, SSD1306_BLACK); 
+      // Add a tiny white glint/reflection to make it look like glass
+      display.drawPixel(bubbleX + (bubbleRadius/2), bubbleY - (bubbleRadius/2), SSD1306_WHITE);
+    }
+  } 
+  else if (currentState == POPPING) {
+    // The POP particle effect (radial lines exploding outward)
+    display.drawLine(bubbleX - 4, bubbleY - 4, bubbleX - 8, bubbleY - 8, SSD1306_WHITE);
+    display.drawLine(bubbleX + 4, bubbleY - 4, bubbleX + 8, bubbleY - 8, SSD1306_WHITE);
+    display.drawLine(bubbleX - 4, bubbleY + 4, bubbleX - 8, bubbleY + 8, SSD1306_WHITE);
+    display.drawLine(bubbleX + 4, bubbleY + 4, bubbleX + 8, bubbleY + 8, SSD1306_WHITE);
+  }
+
+  // --- 5. SWAYING "Zzz" BUBBLES ---
+  // We only spawn/move Zs if the bot is actually asleep
+  if (currentState == ASLEEP) {
+    for(int i = 0; i < MAX_ZS; i++) {
+      if (zs[i].active) {
+        
+        // Calculate the hypnotic side-to-side sway using cosine
+        float currentX = zs[i].baseX + (cos((timeNow / 400.0) + zs[i].swayPhase) * 6.0);
+
+        display.setTextSize(zs[i].size);
+        display.setTextColor(SSD1306_WHITE);
+        display.setCursor((int)currentX, (int)zs[i].y);
+        display.print("Z");
+
+        zs[i].y -= zs[i].speed;
+
+        // Scale up as they rise
+        if (zs[i].y < 25 && zs[i].size == 1) zs[i].size = 2;
+        else if (zs[i].y < 10 && zs[i].size == 2) zs[i].size = 3;
+
+        // Reset when hitting the ceiling
+        if (zs[i].y < 2) {
+          zs[i].baseX = 85 + random(-5, 5); // Pick a slightly new starting X
+          zs[i].y = headY + 5;
+          zs[i].size = 1;
+        }
+      }
+    }
+  }
+
+  // --- 6. ENVIRONMENT ---
+  // A glowing desk nightlight in the background
+  display.drawFastHLine(95, 60, 16, SSD1306_WHITE); // Lamp base
+  display.drawLine(103, 60, 103, 45, SSD1306_WHITE); // Lamp stand
+  display.fillTriangle(95, 45, 111, 45, 103, 35, SSD1306_WHITE); // Lampshade
+  
+  // Floor line
+  display.drawFastHLine(0, 60, 128, SSD1306_WHITE);
+
+  display.display();
+  delay(20); 
+}
